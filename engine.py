@@ -3,40 +3,7 @@ import sqlparse
 from sqlparse.sql import IdentifierList, Identifier, Where, Comparison
 from sqlparse.tokens import Keyword, DML, Wildcard
 from collections import OrderedDict
-
-
-# a = sqlparse.parse("SELECT distinct col1, col2, col3, * from table1, table2 where condition1 = 2 and condition2 = 1 group by col1")[0].tokens
-# for item in a:
-#     print(item.value)
-#     print(item.ttype)
-#     if isinstance(item, Where):
-#         print("Where: ", item.value)
-#         for t in item.tokens:
-#             if isinstance(t, Identifier):
-#                 print("identifier: ", t.value)
-#             if isinstance(item, IdentifierList):
-#                 print("Identifierlist")
-#                 for tt in item.get_identifiers():
-#                     print("IdentifierList: ", tt.value)
-#     if isinstance(item, Identifier):
-#         print("identifier: ", item.value)
-#         # print(item.value)
-#     if isinstance(item, IdentifierList):
-#         print("Identifierlist")
-#         for t in item.get_identifiers():
-#             print("IdentifierList: ", t.value)
-#     if item.ttype is Keyword:
-#         print("Keyword: ", item)
-#     print("\n")
-        # print(item)
-    # print(a.get_identifiers())
-# print(a[0].get_identifiers())
-# print(sqlparse.sql.Where)
-# print("=======================")
-# koistring = sqlparse.sql.IdentifierList(a).get_identifiers()
-# # print(koistring)
-# for token in koistring:
-#     print(token)
+import sys
 
 # Constants
 METADATA_FILE = "metadata.txt"
@@ -44,6 +11,11 @@ METADATA_FILE = "metadata.txt"
 # Global variables
 tables_info = OrderedDict()
 columns_info = {}
+
+# Print error and exit
+def error_and_exit(message):
+    print(message)
+    exit()
 
 # Load tables info from metadata
 def init():
@@ -69,26 +41,38 @@ def init():
             tables_info[curr_table_name][line.strip()] = []
             columns_info[line.strip()] = curr_table_name
         
-def error_and_exit(message):
-    print(message)
-    exit()
-
+# Check if table exists
 def table_exists(table_names_list):
     for table_name in table_names_list:
         if table_name not in tables_info:
             return False
     return True
 
+# Check if column name exists in loaded data
 def column_exists(column_name, temp_table):
     if column_name in temp_table[0]:
         return True
     return False
 
+# Build initial header based on data loaded in memory
 def build_header(column_names_list, temp_table):
     header = []
     for column_name in column_names_list:
         if column_name.strip() == "*":
             return build_header(temp_table[0], temp_table)
+        header.append(columns_info[column_name] + "." + column_name)
+    
+    return header
+
+# Build final header for printing
+def build_final_header(column_names_list, temp_table_header):
+    header = []
+    for column_name in column_names_list:
+        if column_name.strip() == "*":
+            return temp_table_header
+        if is_aggregate_function(column_name):
+            header.append(column_name)
+            continue
         header.append(columns_info[column_name] + "." + column_name)
     
     return header
@@ -118,6 +102,7 @@ def extract_select_params(query_tokens):
             continue
     return select_params_list
 
+# Does what it says
 def extract_order_by_params(query_tokens):
     order_by_seen = False
     order_by_params_list = []
@@ -168,6 +153,7 @@ def extract_where_conditions(query_tokens):
                     where_conditions_list.append(sub_token.value)
     return where_conditions_list
 
+# Does what it says
 def extract_group_by_params(query_tokens):
     group_by_seen = False
     group_by_params_list = []
@@ -186,6 +172,7 @@ def extract_group_by_params(query_tokens):
             continue
     return group_by_params_list
 
+# Get enum of operator from the condition
 def get_operator(condition):
     if condition.find("=") > 0:
         return 1
@@ -198,6 +185,7 @@ def get_operator(condition):
     if condition.find("<=") > 0:
         return 5
 
+# Get index, length of the operator used in the index
 def get_operator_index(condition):
     if condition.find(">=") > 0:
         return (condition.find(">="), 2)
@@ -210,7 +198,7 @@ def get_operator_index(condition):
     if condition.find("<") > 0:
         return (condition.find("<"), 1)
 
-# Extract column from table
+# Extract column from table file
 def extract_column_from_table(table_name, column_name):
     if table_name not in tables_info:
         error_and_exit(table_name + " does not exist")
@@ -226,7 +214,7 @@ def extract_column_from_table(table_name, column_name):
 
     return values
 
-# Get entire table
+# Get entire table from the file
 def get_table(table_name):
     if table_name not in tables_info:
         error_and_exit(table_name + " does not exist")
@@ -241,11 +229,13 @@ def get_table(table_name):
         error_and_exit(table_name + " does not exist")
     return values
 
+# Get column names of the table
 def get_column_names(table_name):
     if table_name not in tables_info:
         error_and_exit(table_name + " does not exist")
     return tables_info[table_name].keys()
 
+# Check if column name is an aggregate function
 def is_aggregate_function(column_name):
     if column_name.lower().startswith("sum"):
         return True
@@ -259,6 +249,7 @@ def is_aggregate_function(column_name):
         return True
     return False
 
+# Get enum of aggregate function
 def get_aggregate_function_index(function):
     if function.lower().startswith("sum"):
         return 1
@@ -272,12 +263,14 @@ def get_aggregate_function_index(function):
         return 5
     return 0
 
+# Get the argument of aggregate functions
 def get_aggregate_function_argument(function):
     start_index = function.find("(") + 1
     end_index = function.find(")")
 
     return function[start_index: end_index].strip()
 
+# Load data from all the tables requested by the user
 def build_temp_table(table_names):
     temp_table = []
 
@@ -305,8 +298,8 @@ def build_temp_table(table_names):
 
     return temp_table
 
+# Filter loaded data based on WHERE conditions
 def filter_temp_table(where_conditions, temp_table):
-
     modified_conditions_list = []
     for condition in where_conditions:
         if condition.strip().lower() == "or" or condition.strip().lower() == "and":
@@ -314,7 +307,6 @@ def filter_temp_table(where_conditions, temp_table):
             continue
 
         condition = condition.replace(" ", "")
-        # print(condition)
         operator_index, length = get_operator_index(condition)
         arg_1 = condition[0:operator_index]
         arg_2 = condition[operator_index + length:]
@@ -340,8 +332,8 @@ def filter_temp_table(where_conditions, temp_table):
 
     filter_condition = " ".join(modified_conditions_list)
     temp_table[1] = [temp_table_row for temp_table_row in temp_table[1] if eval(filter_condition)]
-    # print(temp_table[1])
 
+# Make buckets of data, based on GROUP BY params
 def make_buckets(group_by_params, temp_table):
     column_name = group_by_params[0]
     if column_name.strip() not in temp_table[0]:
@@ -362,7 +354,8 @@ def make_buckets(group_by_params, temp_table):
             temp_table[1].append(row)
     return buckets
 
-def get_aggregate_value(agg_function, table, temp_table):
+# Calculate aggregate value from the data, based on the passed aggregate function
+def get_aggregate_value(agg_function, bucket, temp_table):
     arg = get_aggregate_function_argument(agg_function)
     if arg not in temp_table[0] and arg.strip() is not "*":
         error_and_exit("Invalid select parameters")
@@ -374,29 +367,30 @@ def get_aggregate_value(agg_function, table, temp_table):
     
     # Sum
     if get_aggregate_function_index(agg_function) == 1:
-        col_values = [row[index] for row in table]
+        col_values = [row[index] for row in bucket]
         return sum(col_values)
 
     # average
     if get_aggregate_function_index(agg_function) == 2:
-        col_values = [row[index] for row in table]
-        return sum(col_values)/len(table)
+        col_values = [row[index] for row in bucket]
+        return sum(col_values)/len(bucket)
     
     # Max
     if get_aggregate_function_index(agg_function) == 3:
-        col_values = [row[index] for row in table]
+        col_values = [row[index] for row in bucket]
         return max(col_values)
 
     # Min
     if get_aggregate_function_index(agg_function) == 4:
-        col_values = [row[index] for row in table]
+        col_values = [row[index] for row in bucket]
         return min(col_values)
 
 
     # Count
     if get_aggregate_function_index(agg_function) == 5:
-        return len(table)
+        return len(bucket)
 
+# Fill aggregate values in the selected data, if requested
 def fill_aggregate_values(ans_table, buckets, temp_table, aggregates_list):
     i = 0
     for key in buckets:
@@ -405,24 +399,21 @@ def fill_aggregate_values(ans_table, buckets, temp_table, aggregates_list):
         i = i + 1
     return
 
+# Select columns requested by the user from the loaded data
 def select_columns(select_params, buckets, temp_table, grouped):
     ans_table = []
     has_aggregates = False
     aggregates_list = []
     for key in buckets:
-        # print("Key:", key)
         for row in buckets[key]:
             ans_row = []
             i = 0
             for param in select_params:
                 if is_aggregate_function(param):
-                    # ans_row.append(get_aggregate_value(param, buckets[key], temp_table))
                     ans_row.append("agg function")
                     has_aggregates = True
                     aggregates_list.append((param, i))
-                    # key_done = True
                 elif param.strip() == "*":
-                    # print("Not aggregate")
                     ans_row = row.copy()
                 else:
                     if param.strip() not in temp_table[0]:
@@ -438,6 +429,7 @@ def select_columns(select_params, buckets, temp_table, grouped):
     temp_table[0] = select_params
     return ans_table
 
+# Process DISTINCT keyword in the query
 def process_distinct(query_tokens, temp_table):
     distinct_present = False
     for token in query_tokens:
@@ -456,6 +448,7 @@ def process_distinct(query_tokens, temp_table):
         temp_table[1] = copy
     return
 
+# Order the data based on ORDER BY params
 def process_order_by(order_by_params, temp_table):
     order_by_params = order_by_params[0]
     param = order_by_params.split()[0].strip()
@@ -475,61 +468,59 @@ def process_order_by(order_by_params, temp_table):
     temp_table[1].sort(reverse=True, key = lambda x:x[param_index])
     return
 
+# Print output to console
+def print_output(temp_table, header):
+    print(",".join(header))
+    for row in temp_table[1]:
+        print(",".join([str(num) for num in row]))
+
+# Start query processing, taking input from console
 def process_query():
-    # a = sqlparse.parse("SELECT E, max(A) from table1, table2 where 640 = A and B > 718 group by E")[0].tokens
-    # a = sqlparse.parse("SELECT A from table1 group by A")[0].tokens
-    sql = "Select A , max(B) from table1;"
+    sql = sys.argv[1]
     if sql.strip()[-1] != ";":
         error_and_exit("Sql syntax error: missing semi-colon")
 
     a = sqlparse.parse(sql)[0].tokens
 
     grouped = False
-    select_params = extract_select_params(a)
+    select_params = extract_select_params(a) # Get SELECT params
     if len(select_params) < 1:
         error_and_exit("Please specify select parameters")
     for item in select_params:
         if is_aggregate_function(item.strip()):
             grouped = True
     
-    from_params = extract_from_params(a)
+    from_params = extract_from_params(a) # Get FROM params
     if len(from_params) < 1:
         error_and_exit("Please specify tables")
     
-    tt = build_temp_table(from_params)
-    
-    where_conditions = extract_where_conditions(a)
+    tt = build_temp_table(from_params) # Store all the data from the tables requested
+    temp_header = build_header(tt[0], tt) # Build header containing list of column names
+
+    where_conditions = extract_where_conditions(a) # Get WHERE params
     if(len(where_conditions) > 0):
-        filter_temp_table(where_conditions, tt)
+        filter_temp_table(where_conditions, tt) # Filter the data based on where conditions
     
-    group_by_params = extract_group_by_params(a)
+    group_by_params = extract_group_by_params(a) # Get GROUP BY params
     buckets = None
     if len(group_by_params) > 0:
-        buckets = make_buckets(group_by_params, tt)
+        buckets = make_buckets(group_by_params, tt) # make buckets of grouped data if GROUP BY params exists
         grouped = True
     else:
         buckets = {}
-        buckets["a"] = tt[1]
+        buckets["a"] = tt[1] # Consider whole data as a single bucket, if GROUP BY params don't exists
 
-    tt[1] = select_columns(select_params, buckets, tt, grouped)
+    tt[1] = select_columns(select_params, buckets, tt, grouped) # Select requested columns from the data
     
-    process_distinct(a, tt)
+    process_distinct(a, tt) # Process DISTINCT keyword
     
-    order_by_params = extract_order_by_params(a)
+    order_by_params = extract_order_by_params(a) # Get ORDER BY params
     if len(order_by_params) > 0:
-        process_order_by(order_by_params, tt)
+        process_order_by(order_by_params, tt) # Order the data based on ORDER BY params
 
-    i = 0
-    for row in tt[1]:
-        print(i, row)
-        i = i + 1
+    header = build_final_header(select_params, temp_header) # Build header based on the list of columns requested by the user
+    print_output(tt, header) # Print Final output to the console
+
 if __name__ == "__main__":
     init()
-    # print(tables_info)
     process_query()
-
-    # print(extract_column_from_table("table1", "B"))
-    # print(get_table("table1"))
-    # tt = build_temp_table("table1", "table2", "table2")
-
-    # extract_where_conditions(a)
